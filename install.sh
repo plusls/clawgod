@@ -976,12 +976,21 @@ const patches = [
   },
   {
     // ≤v2.1.110: function X(){return Y("tengu_review_bughunter_config",null)?.enabled===!0}
-    // v2.1.119+: function X(){return Y("tengu_review_bughunter_config",null)} — getter
+    // v2.1.119+: function X(){return Y("tengu_review_bughunter_config",null)} — bare getter
     //            and the gate at function Z(){return X()?.enabled===!0} elsewhere.
-    //            We override the getter to always return {enabled:!0}.
+    // v2.1.152+: same bare-getter shape, but the returned config object now also
+    //            feeds OIH/ca/Tm4 helpers that read .cost_note / .duration_note /
+    //            .model. Earlier replacer returned `{enabled:!0}` flat — that
+    //            stripped those fields, and some downstream init path read .model
+    //            then hung the boot before the trust dialog ever rendered
+    //            (issue #86, observed on 2.1.152). Preserve the original config
+    //            shape and only force-flip the enabled flag.
     name: 'Ultrareview enable',
-    pattern: /function ([\w$]+)\(\)\{return [\w$]+\("tengu_review_bughunter_config",null\)(\?\.enabled===!0)?\}/g,
-    replacer: (m, fn) => `function ${fn}(){return{enabled:!0}}`,
+    pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\("tengu_review_bughunter_config",null\)(\?\.enabled===!0)?\}/g,
+    replacer: (m, fn, getter, gate) =>
+      gate
+        ? `function ${fn}(){return!0}`
+        : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
     sentinel: '"tengu_review_bughunter_config"',
   },
   {
@@ -1269,7 +1278,12 @@ for (const p of patches) {
     const replacement = p.replacer(m[0], ...m.slice(1));
     if (replacement !== m[0]) {
       if (!dryRun) {
-        code = code.replace(m[0], replacement);
+        // Use function-form replace: String.prototype.replace with a string
+        // replacement interprets $$ as literal $, $1/$& as backreferences.
+        // Minified upstream identifiers like `a$$` would silently become `a$`
+        // and break every caller referencing the original name. Function form
+        // is opaque to the parser. (issue #86)
+        code = code.replace(m[0], () => replacement);
       }
       count++;
     }

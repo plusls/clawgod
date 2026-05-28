@@ -1079,8 +1079,11 @@ const patches = [
   },
   {
     name: 'Ultrareview enable',
-    pattern: /function ([\w$]+)\(\)\{return [\w$]+\("tengu_review_bughunter_config",null\)(\?\.enabled===!0)?\}/g,
-    replacer: (m, fn) => `function ${fn}(){return{enabled:!0}}`,
+    pattern: /function ([\w$]+)\(\)\{return ([\w$]+)\("tengu_review_bughunter_config",null\)(\?\.enabled===!0)?\}/g,
+    replacer: (m, fn, getter, gate) =>
+      gate
+        ? `function ${fn}(){return!0}`
+        : `function ${fn}(){let _r=${getter}("tengu_review_bughunter_config",null);return _r?{..._r,enabled:!0}:{enabled:!0}}`,
     sentinel: '"tengu_review_bughunter_config"',
   },
   {
@@ -1307,7 +1310,9 @@ for (const p of patches) {
   let count = 0;
   for (const m of relevant) {
     const replacement = p.replacer(m[0], ...m.slice(1));
-    if (replacement !== m[0]) { if (!dryRun) code = code.replace(m[0], replacement); count++; }
+    // Function-form replace: a string replacement would interpret $$ as $
+    // and break minified identifiers like `a$$`. See install.sh issue #86.
+    if (replacement !== m[0]) { if (!dryRun) code = code.replace(m[0], () => replacement); count++; }
   }
   if (count > 0) { console.log(`  OK ${p.name} (${count})`); applied++; }
   else { console.log(`  >> ${p.name} (no change)`); skipped++; }
